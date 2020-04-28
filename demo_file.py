@@ -26,6 +26,7 @@ import cv2
 
 from mtcnn import MTCNN
 import glob
+import time
 
 def load_model(model):
     # Check if the model is a model directory (containing a metagraph and a checkpoint file)

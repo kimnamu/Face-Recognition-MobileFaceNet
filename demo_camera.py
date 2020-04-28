@@ -26,6 +26,7 @@ import cv2
 
 from mtcnn import MTCNN
 import glob
+import time
 
 def load_model(model):
     # Check if the model is a model directory (containing a metagraph and a checkpoint file)
@@ -44,8 +45,8 @@ def load_model(model):
         print('Metagraph file: %s' % meta_file)
         print('Checkpoint file: %s' % ckpt_file)
 
-        saver = tf.train.import_meta_graph(os.path.join(model_exp, meta_file))
-        saver.restore(tf.get_default_session(), os.path.join(model_exp, ckpt_file))
+        saver = tf.compat.v1.train.import_meta_graph(os.path.join(model_exp, meta_file))
+        saver.restore(tf.compat.v1.get_default_session(), os.path.join(model_exp, ckpt_file))
 
 
 def get_model_filenames(model_dir):
@@ -92,24 +93,23 @@ def preprocessing(image, detector, filesave = ""):
 
 def main(args):
     with tf.Graph().as_default():
-        with tf.Session() as sess:
+        with tf.compat.v1.Session() as sess:
             cap = cv2.VideoCapture(0)
             # Load the model
             load_model(args.model)
 
             # Get input and output tensors, ignore phase_train_placeholder for it have default value.
-            inputs_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-            embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+            inputs_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("input:0")
+            embeddings = tf.compat.v1.get_default_graph().get_tensor_by_name("embeddings:0")
 
             # face detection
             detector = MTCNN()
 
             # Embedding Registered Images
-            filelist = glob.glob("./registration/*/*.jpg")
+            filelist = glob.glob("./registration/*/*.jpg") # './registration/001/001.jpg' 
             filelist.sort()
             embeds_reg = {}
             for file in filelist:
-                # file = './registration/001/001.jpg' 
                 id_embed = file.split('/')[2]
                 embedFile = (file[0:-3]+"npy")
                 if os.path.exists(embedFile):
@@ -134,8 +134,10 @@ def main(args):
                 # Read Camera Image
                 ret, cam_img = cap.read()
                 if ret == False: break
+                # cam_img = cv2.imread(filelist[0])
                 cv2.imshow('image', cam_img)
                 
+                start = time.time()
                 img, flag = preprocessing(cam_img, detector, "image2.jpg")
                 feed_dict = {inputs_placeholder: [img]}
                 if flag is False : continue
@@ -152,8 +154,8 @@ def main(args):
                             img_name ="./registration/{}/{:03}.jpg".format(key, i+1)
                             img = cv2.imread(img_name)
                             cv2.imwrite("./image1.jpg", img)
-                            
-
+                
+                end = time.time()  
                 if min_dist < 0.95: # 1.19:
                     if min_id == '001':
                         print("Lucas", min_dist)
@@ -168,6 +170,7 @@ def main(args):
                     cv2.imwrite("./image1.jpg", img)
                     print("This is an unregistered person.", dist)
 
+                print("Time elapsed during the calculation: {:.3} sec, {:.3} fps".format(end - start, 1.0/(end-start)))
                 key = cv2.waitKey(25)
                 if key == 27:
                     cv2.destroyAllWindows()
