@@ -78,18 +78,19 @@ def preprocessing(image, detector, filesave = ""):
     detection = detector.detect_faces(img)
     if detection.__len__() == 0: 
         print("fail to detect face")
-        return [], False
+        return [], False, []
     x, y, w, h = detection[0]['box']
     img = img[y:y+h, x:x+w]
     if img.size == 0: 
         print("fail to detection correctly")
-        return [], False
+        return [], False, []
     img = cv2.resize(img, (112,112))
     if filesave is not "":
         cv2.imwrite(filesave, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     img = img - 127.5
     img = img * 0.0078125
-    return img, True
+    bbox = [x, y, w, h]
+    return img, True, bbox
 
 def main(args):
     with tf.Graph().as_default():
@@ -120,7 +121,7 @@ def main(args):
                         embeds_reg[id_embed] = embed
                     continue
                 img = cv2.imread(file)
-                img, flag = preprocessing(img, detector)
+                img, flag, bbox = preprocessing(img, detector)
                 if flag is False : continue
                 feed_dict = {inputs_placeholder: [img]}
                 embed = sess.run(embeddings, feed_dict=feed_dict)
@@ -135,10 +136,8 @@ def main(args):
                 ret, cam_img = cap.read()
                 if ret == False: break
                 # cam_img = cv2.imread(filelist[0])
-                cv2.imshow('image', cam_img)
-                
                 start = time.time()
-                img, flag = preprocessing(cam_img, detector, "image2.jpg")
+                img, flag, bbox = preprocessing(cam_img, detector, "image2.jpg")
                 feed_dict = {inputs_placeholder: [img]}
                 if flag is False : continue
                 embed_cmp = sess.run(embeddings, feed_dict=feed_dict)
@@ -152,25 +151,32 @@ def main(args):
                             min_dist = dist
                             min_id = key
                             img_name ="./registration/{}/{:03}.jpg".format(key, i+1)
-                            img = cv2.imread(img_name)
-                            cv2.imwrite("./image1.jpg", img)
+                img = cv2.imread(img_name)
+                cv2.imwrite("./image1.jpg", img)
                 
-                end = time.time()  
+                end = time.time()
+
+                name = "Unregistered"
                 if min_dist < 0.95: # 1.19:
                     if min_id == '001':
-                        print("Lucas", min_dist)
+                        name = "Lucas"
                     elif min_id == '002':
-                        print("Jarome", min_dist)
+                        name = "Jarome"
                     elif min_id == '003':
-                        print("Won", min_dist)
+                        name = "Won"
                     elif min_id == '004':
-                        print("Ashim", min_dist)
+                        name = "Ashim"
+                    print("{} (conf:{:.3})".format(name, float(min_dist)))
                 else:
-                    img = cv2.imread("./registration/no_one.jpg")
+                    img = cv2.imread("./registration/unregistered.jpg")
                     cv2.imwrite("./image1.jpg", img)
-                    print("This is an unregistered person.", dist)
+                    print("Unregistered")
 
-                print("Time elapsed during the calculation: {:.3} sec, {:.3} fps".format(end - start, 1.0/(end-start)))
+                x,y,w,h = bbox
+                image = cv2.rectangle(cam_img, (x, y), (x + w, y + h), (36,255,12), 1)
+                cv2.putText(image, name, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+                cv2.imshow("Face Recognition", image)
+                print("Time elapsed during the calculation: {:.3} sec, {:.3} fps\n".format(end - start, 1.0/(end-start)))
                 key = cv2.waitKey(25)
                 if key == 27:
                     cv2.destroyAllWindows()
