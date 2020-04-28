@@ -164,6 +164,8 @@ def main(args):
                     elif min_id == '004':
                         print("Ashim", min_dist)
                 else:
+                    img = cv2.imread("./registration/no_one.jpg")
+                    cv2.imwrite("./image1.jpg", img)
                     print("This is an unregistered person.", dist)
 
                 key = cv2.waitKey(25)
