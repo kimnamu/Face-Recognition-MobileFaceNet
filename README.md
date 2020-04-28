@@ -12,6 +12,7 @@ Tensorflow implementation for MobileFaceNet.
 - numpy
 - mxnet
 - pickle
+- mtcnn
 
 ## Prepare dataset
 
