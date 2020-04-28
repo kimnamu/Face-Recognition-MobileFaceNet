@@ -25,6 +25,7 @@ import os
 import cv2
 
 from mtcnn import MTCNN
+import glob
 
 def load_model(model):
     # Check if the model is a model directory (containing a metagraph and a checkpoint file)
@@ -71,6 +72,24 @@ def get_model_filenames(model_dir):
                 ckpt_file = step_str.groups()[0]
     return meta_file, ckpt_file
 
+def preprocessing(image, detector, filesave = ""):
+    img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    detection = detector.detect_faces(img)
+    if detection.__len__() == 0: 
+        print("fail to detect face")
+        return [], False
+    x, y, w, h = detection[0]['box']
+    img = img[y:y+h, x:x+w]
+    if img.size == 0: 
+        print("fail to detection correctly")
+        return [], False
+    img = cv2.resize(img, (112,112))
+    if filesave is not "":
+        cv2.imwrite(filesave, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    img = img - 127.5
+    img = img * 0.0078125
+    return img, True
+
 def main(args):
     with tf.Graph().as_default():
         with tf.Session() as sess:
@@ -84,56 +103,73 @@ def main(args):
 
             # face detection
             detector = MTCNN()
+
+            # Embedding Registered Images
+            filelist = glob.glob("./registration/*/*.jpg")
+            filelist.sort()
+            embeds_reg = {}
+            for file in filelist:
+                # file = './registration/001/001.jpg' 
+                id_embed = file.split('/')[2]
+                embedFile = (file[0:-3]+"npy")
+                if os.path.exists(embedFile):
+                    embed = np.load(embedFile)
+                    if id_embed in embeds_reg:
+                        embeds_reg[id_embed] = np.append(embeds_reg[id_embed], embed, axis = 0)
+                    else:
+                        embeds_reg[id_embed] = embed
+                    continue
+                img = cv2.imread(file)
+                img, flag = preprocessing(img, detector)
+                if flag is False : continue
+                feed_dict = {inputs_placeholder: [img]}
+                embed = sess.run(embeddings, feed_dict=feed_dict)
+                np.save(embedFile, embed)
+                if id_embed in embeds_reg:
+                    embeds_reg[id_embed] = np.append(embeds_reg[id_embed], embed, axis = 0)
+                else:
+                    embeds_reg[id_embed] = embed
+
             while(True):
                 # Read Camera Image
                 ret, cam_img = cap.read()
                 if ret == False: break
-                k = cv2.waitKey()
-                # Registration
-                if k == 97:
-                    pass
-                # Comparison
+                cv2.imshow('image', cam_img)
+                
+                img, flag = preprocessing(cam_img, detector, "image2.jpg")
+                feed_dict = {inputs_placeholder: [img]}
+                if flag is False : continue
+                embed_cmp = sess.run(embeddings, feed_dict=feed_dict)
+
+                min_dist = 10
+                for key in embeds_reg:
+                    for i, embed_reg in enumerate(embeds_reg[key]):
+                        diff = np.subtract(embed_reg, embed_cmp)
+                        dist = np.sum(np.square(diff), 1)
+                        if dist < min_dist:
+                            min_dist = dist
+                            min_id = key
+                            img_name ="./registration/{}/{:03}.jpg".format(key, i+1)
+                            img = cv2.imread(img_name)
+                            cv2.imwrite("./image1.jpg", img)
+                            
+
+                if min_dist < 0.95: # 1.19:
+                    if min_id == '001':
+                        print("Lucas", min_dist)
+                    elif min_id == '002':
+                        print("Jarome", min_dist)
+                    elif min_id == '003':
+                        print("Won", min_dist)
+                    elif min_id == '004':
+                        print("Ashim", min_dist)
                 else:
-                    img = cv2.cvtColor(cv2.imread("registration/test1.jpg"), cv2.COLOR_BGR2RGB)
-                    detection = detector.detect_faces(img)
-                    x, y, w, h = detection[0]['box']
-                    img = img[y:y+h, x:x+w]
-                    img = cv2.resize(img, (112,112))
-                    cv2.imwrite("sample1.jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                    # cv2.imwrite("sample1_2.jpg", cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                    print("This is an unregistered person.", dist)
 
-                    img = img - 127.5
-                    img = img * 0.0078125
-
-                    feed_dict = {inputs_placeholder: [img]}
-                    embed1 = sess.run(embeddings, feed_dict=feed_dict)
-
-                    
-                    img = cv2.cvtColor(cam_img, cv2.COLOR_BGR2RGB)
-                    detection = detector.detect_faces(img)
-                    if detection.__len__() == 0: 
-                        print("fail to detect face")
-                        continue
-                    x, y, w, h = detection[0]['box']
-                    img = img[y:y+h, x:x+w]
-                    if img.size == 0: 
-                        print("fail to detection correctly")
-                        continue
-                    img = cv2.resize(img, (112,112))
-                    cv2.imwrite("sample2.jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                    img = img - 127.5
-                    img = img * 0.0078125
-                    
-                    feed_dict = {inputs_placeholder: [img]}
-                    embed2 = sess.run(embeddings, feed_dict=feed_dict)
-
-                    diff = np.subtract(embed1, embed2)
-                    dist = np.sum(np.square(diff), 1)
-
-                    if dist < 0.95: # 1.19:
-                        print("Same", dist)
-                    else:
-                        print("Not same", dist)
+                key = cv2.waitKey(25)
+                if key == 27:
+                    cv2.destroyAllWindows()
+                    break
                         
 
 def parse_arguments(argv):
