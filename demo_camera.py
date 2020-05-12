@@ -92,22 +92,86 @@ def preprocessing(image, detector, filesave = ""):
     bbox = [x, y, w, h]
     return img, True, bbox
 
+def load_pb(graph, path_to_pb):
+    with tf.gfile.GFile(path_to_pb, "rb") as f:
+        graph_def = tf.GraphDef()
+        graph_def.ParseFromString(f.read())
+    # with tf.Graph().as_default() as graph:
+    tf.import_graph_def(graph_def, name='')
+    return graph
+
+def registration(img, embeds_reg, detector, sess, inputs_placeholder, embeddings):
+    dir_reg = "./registration"
+    id_list = [os.path.join(dir_reg, d) for d in os.listdir(dir_reg) if os.path.isdir(os.path.join(dir_reg, d))]
+    if len(id_list)==0:
+        id_new = 1
+    else:
+        id_list.sort()
+        id_new = int(id_list[-1].split('/')[2])+1
+    os.mkdir("{}/{:03}".format(dir_reg, id_new))
+    cv2.imwrite("{}/{:03}/001.jpg".format(dir_reg, id_new), img)
+
+    file = "{}/{:03}/001.jpg".format(dir_reg, id_new)
+    id_embed = file.split('/')[2]
+    embedFile = (file[0:-3]+"npy")
+    
+    img, flag, bbox = preprocessing(img, detector)
+    if flag is False :
+        return embeds_reg, flag
+
+    feed_dict = {inputs_placeholder: [img]}
+    embed = sess.run(embeddings, feed_dict=feed_dict)
+    np.save(embedFile, embed)
+    embeds_reg[id_embed] = embed
+
+    return embeds_reg, flag
+
+
+
 def main(args):
-    with tf.Graph().as_default():
+    # path_to_pb = "./arch/pretrained2/new_model.pb"
+    # path_to_pb = "./arch/pretrained_model/MobileFaceNet_TF.pb"
+
+    # with tf.io.gfile.GFile(path_to_pb, "rb") as f:
+    #     graph_def = tf.compat.v1.GraphDef()
+    #     graph_def.ParseFromString(f.read())
+    with tf.Graph().as_default() as graph:
+        # tf.import_graph_def(graph_def, name='')
         with tf.compat.v1.Session() as sess:
             cap = cv2.VideoCapture(0)
+            # 1. ckpt
             # Load the model
             load_model(args.model)
-
+            
             # Get input and output tensors, ignore phase_train_placeholder for it have default value.
             inputs_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("input:0")
             embeddings = tf.compat.v1.get_default_graph().get_tensor_by_name("embeddings:0")
+
+            # 2. (temp) save pb model
+            # tf.io.write_graph(sess.graph_def, '.', './arch/pretrained2/new_model.pb', as_text=False)
+
+            # 2. pb version
+            # graph = load_pb(graph, "./arch/pretrained2/new_model.pb")
+            # path_to_pb = "./arch/pretrained2/new_model.pb"
+            # with tf.gfile.GFile(path_to_pb, "rb") as f: # pb
+            #     graph_def = tf.GraphDef()
+            #     graph_def.ParseFromString(f.read())
+            # tf.import_graph_def(graph_def, name='') # pb
+            # inputs_placeholder = tf.compat.v1.get_default_graph().get_tensor_by_name("img_inputs:0")
+            # embeddings = tf.compat.v1.get_default_graph().get_tensor_by_name("embeddings:0")
+            inputs_placeholder = graph.get_tensor_by_name('img_inputs:0')
+            embeddings = graph.get_tensor_by_name('embeddings:0')
 
             # face detection
             detector = MTCNN()
 
             # Embedding Registered Images
-            filelist = glob.glob("./registration/*/*.jpg") # './registration/001/001.jpg' 
+            dir_reg = "./registration"
+            if os.path.exists(dir_reg):
+                filelist = glob.glob("./registration/*/*.jpg") # './registration/001/001.jpg' 
+            else:
+                os.mkdir(dir_reg)
+                filelist = []
             filelist.sort()
             embeds_reg = {}
             for file in filelist:
@@ -140,8 +204,17 @@ def main(args):
                 img, flag, bbox = preprocessing(cam_img, detector, "image2.jpg")
                 feed_dict = {inputs_placeholder: [img]}
                 if flag is False : continue
-                embed_cmp = sess.run(embeddings, feed_dict=feed_dict)
 
+                key = cv2.waitKey(25)
+                if key == 27:
+                    cv2.destroyAllWindows()
+                    break
+                if key != -1 and chr(key) == 'r':
+                    embeds_reg, flag = registration(cam_img, embeds_reg, detector, sess, inputs_placeholder, embeddings)
+                    print("Registration is {}".format("success" if flag else "fail"))
+                    continue
+
+                embed_cmp = sess.run(embeddings, feed_dict=feed_dict)
                 min_dist = 10
                 for key in embeds_reg:
                     for i, embed_reg in enumerate(embeds_reg[key]):
@@ -151,36 +224,27 @@ def main(args):
                             min_dist = dist
                             min_id = key
                             img_name ="./registration/{}/{:03}.jpg".format(key, i+1)
-                img = cv2.imread(img_name)
-                cv2.imwrite("./image1.jpg", img)
+                if min_dist != 10:
+                    img = cv2.imread(img_name)
+                    cv2.imwrite("./image1.jpg", img)
                 
                 end = time.time()
 
                 name = "Unregistered"
                 if min_dist < 0.95: # 1.19:
-                    if min_id == '001':
-                        name = "Lucas"
-                    elif min_id == '002':
-                        name = "Jarome"
-                    elif min_id == '003':
-                        name = "Won"
-                    elif min_id == '004':
-                        name = "Ashim"
-                    print("{} (conf:{:.3})".format(name, float(min_dist)))
+                    name = str("ID:{}".format(min_id))
+                    print("{}(Score:{:.3})".format(name, float(min_dist)))
                 else:
                     img = cv2.imread("./registration/unregistered.jpg")
                     cv2.imwrite("./image1.jpg", img)
-                    print("Unregistered")
+                    print("{}(Score:{:.3})".format(name, float(min_dist)))                   
 
                 x,y,w,h = bbox
                 image = cv2.rectangle(cam_img, (x, y), (x + w, y + h), (36,255,12), 1)
                 cv2.putText(image, name, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
                 cv2.imshow("Face Recognition", image)
                 print("Time elapsed during the calculation: {:.3} sec, {:.3} fps\n".format(end - start, 1.0/(end-start)))
-                key = cv2.waitKey(25)
-                if key == 27:
-                    cv2.destroyAllWindows()
-                    break
+                
                         
 
 def parse_arguments(argv):
@@ -204,11 +268,7 @@ if __name__ == '__main__':
     main(parse_arguments(sys.argv[1:]))
 
 
-
-# diff = np.subtract(embed1, embed2)
-# dist = np.sum(np.square(diff), 1)
-
-# Runnning forward pass on lfw images
+## This is the result of runnning forward pass on lfw images
 # thresholds max: 1.25 <=> min: 1.19
 # total time 218.712s to evaluate 12000 images of lfw
 # Accuracy: 0.994+-0.004
@@ -218,6 +278,7 @@ if __name__ == '__main__':
 # Equal Error Rate (EER): 0.007
 
 
+## This is the example of MTCNN detection result
 # detector.detect_faces(img)
 # [
 #     {
@@ -233,3 +294,7 @@ if __name__ == '__main__':
 #         'confidence': 0.99851983785629272
 #     }
 # ]
+
+
+"**((*"
+
